@@ -1,5 +1,6 @@
 from typing import List
 
+import numpy as np
 import ray
 
 from config import MuZeroConfig
@@ -28,12 +29,16 @@ class ReplayBuffer(object):
              g.make_target(i, num_unroll_steps, td_steps, g.to_play()))
             for (g, i) in game_pos]
 
+  # TODO: Make a prioritized sampling method
   def sample_game(self) -> Game:
     # Sample game from buffer either uniformly or according to some priority.
-    # TODO: create an actual sampling method
-    return self.buffer[0]
+    if len(self.buffer) == 0:
+      return None
 
-  def sample_position(self, game) -> int:
+    sample_idx = np.random.randint(0, len(self.buffer))
+    return self.buffer[sample_idx]
+
+  # TODO: Make a prioritized sampling method
+  def sample_position(self, game: Game) -> int:
     # Sample position from game either uniformly or according to some priority.
-    # TODO: create an actual sampling method
-    return -1
+    return np.random.randint(0, len(game.obs_history))

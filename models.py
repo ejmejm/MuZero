@@ -81,49 +81,14 @@ class Network(object):
     return 0
 
   def to(self, device):
-    self.representation_model.to(device)
-    self.prediction_model.to(device)
-    self.dynamics_model.to(device)
+    self.representation_model = self.representation_model.to(device)
+    self.prediction_model = self.prediction_model.to(device)
+    self.dynamics_model = self.dynamics_model.to(device)
 
-
-# TODO: fill out function
-def make_uniform_network():
-  raise NotImplementedError()
-
-# def update_weights(optimizer: tf.train.Optimizer, network: Network, batch,
-#                    weight_decay: float):
-#   loss = 0
-#   for image, actions, targets in batch:
-#     # Initial step, from the real observation.
-#     value, reward, policy_logits, hidden_state = network.initial_inference(
-#         image)
-#     predictions = [(1.0, value, reward, policy_logits)]
-
-#     # Recurrent steps, from action and previous hidden state.
-#     for action in actions:
-#       value, reward, policy_logits, hidden_state = network.recurrent_inference(
-#           hidden_state, action)
-#       predictions.append((1.0 / len(actions), value, reward, policy_logits))
-
-#       hidden_state = scale_gradient(hidden_state, 0.5)
-
-#     for prediction, target in zip(predictions, targets):
-#       gradient_scale, value, reward, policy_logits = prediction
-#       target_value, target_reward, target_policy = target
-
-#       l = (
-#           scalar_loss(value, target_value) +
-#           scalar_loss(reward, target_reward) +
-#           tf.nn.softmax_cross_entropy_with_logits(
-#               logits=policy_logits, labels=target_policy))
-
-#       loss += scale_gradient(l, gradient_scale)
-
-#   for weights in network.get_weights():
-#     loss += weight_decay * tf.nn.l2_loss(weights)
-
-#   optimizer.minimize(loss)
-
+  def parameters(self):
+    return list(self.representation_model.parameters()) + \
+           list(self.prediction_model.parameters()) + \
+           list(self.dynamics_model.parameters())
 
 # TODO: Implement networks for non-atari environments using a modifiable config
 

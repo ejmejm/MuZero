@@ -69,11 +69,6 @@ class MuZeroConfig(object):
     self.lr_decay_rate = 0.1
     self.lr_decay_steps = lr_decay_steps
 
-    self.test_var = [4]
-
-  def test(self):
-    self.test_var = [10]
-
 # def make_board_game_config(action_space_size: int, max_moves: int,
 #                dirichlet_alpha: float,
 #                lr_init: float) -> MuZeroConfig:
@@ -159,8 +154,8 @@ def make_gym_atari_config(env_name: str) -> MuZeroConfig:
     td_steps=10,
     num_actors=4,
     lr_init=0.05,
-    lr_decay_steps=35e3,
-    training_steps=1e5,
+    lr_decay_steps=int(35e3),
+    training_steps=int(1e5),
     env_name=env_name,
     obs_preprocessing_type='atari',
     obs_shape=(ATARI_DEFAULT_FRAMESTACK_SIZE * 3,) + ATARI_DEFAULT_CROP_SIZE,
