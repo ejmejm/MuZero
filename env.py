@@ -116,6 +116,8 @@ class Game(object):
     self.action_space_size = config.action_space_size
     self.action_space = generate_action_range(self.action_space_size)
     self.discount = config.discount
+    self.max_moves = config.max_moves
+    self.action_repeat = config.action_repeat
 
     if config.obs_preprocessing_type and config.obs_preprocessing_type.lower() == 'atari':
       self.make_image = lambda state_index: atari_preprocess_obs(
@@ -127,14 +129,18 @@ class Game(object):
     return Game(config)
 
   def terminal(self) -> bool:
-    return self.environment.done
+    return self.environment.done or len(self.obs_history) > self.max_moves # or len(self.obs_history) > 10 # For quick testing
 
   def legal_actions(self) -> List[Action]:
     # Game specific calculation of legal actions.
     return self.action_space
 
   def apply(self, action: Action):
-    reward = self.environment.step(action)
+    reward = 0
+    for _ in range(self.action_repeat):
+      reward += self.environment.step(action)
+      if self.terminal():
+        break
     self.rewards.append(reward)
     self.history.append(action)
     self.obs_history.append(self.environment.curr_obs)

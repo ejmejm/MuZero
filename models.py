@@ -6,10 +6,17 @@ from typing import Dict, List, NamedTuple
 from env import Action, generate_action_range
 
 class NetworkOutput(NamedTuple):
-  value: float
-  reward: float
-  policy_logits: Dict[Action, float]
+  value: torch.Tensor
+  reward: torch.Tensor
+  policy_logits: torch.Tensor
   hidden_state: torch.Tensor
+
+  def numpy(self):
+    output_reward = self.reward.cpu().detach().numpy()
+    output_policy = self.policy_logits.cpu().detach().numpy()
+    output_value = self.value.cpu().detach().numpy()
+
+    return NetworkOutput(output_value, output_reward, output_policy, self.hidden_state)
 
 class Network(object):
   def __init__(self, in_shape, action_space_size, device=None):
@@ -17,6 +24,7 @@ class Network(object):
     self.action_space_size = action_space_size
     self.action_space = generate_action_range(self.action_space_size)
     self.hidden_state_shape = (128, 6, 6)
+    self.step = 0
     if device is None:
       self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
@@ -35,9 +43,9 @@ class Network(object):
     policy, value = self.prediction_model(hidden_state)
 
     output_hidden_state = hidden_state
-    output_reward = 0
-    output_policy = dict(zip(self.action_space, policy.cpu().detach().numpy()[0]))
-    output_value = value.cpu().detach().numpy()[0]
+    output_reward = torch.tensor(0, dtype=torch.float32, device=self.device)
+    output_policy = policy[0]
+    output_value = value[0][0]
 
     # representation + prediction function
     return NetworkOutput(output_value, output_reward, output_policy, output_hidden_state)
@@ -65,22 +73,22 @@ class Network(object):
     policy, value = self.prediction_model(next_hidden_state)
 
     output_hidden_state = next_hidden_state
-    output_reward = reward.cpu().detach().numpy()[0]
-    output_policy = dict(zip(self.action_space, policy.cpu().detach().numpy()[0]))
-    output_value = value.cpu().detach().numpy()[0]
+    output_reward = reward[0][0]
+    output_policy = policy[0]
+    output_value = value[0][0]
 
     # representation + prediction function
     return NetworkOutput(output_value, output_reward, output_policy, output_hidden_state)
 
-  def get_weights(self):
-    # Returns the weights of this network.
-    return []
+  def increment_step(self):
+    self.step += 1
 
   def training_steps(self) -> int:
     # How many steps / batches the network has been trained for.
-    return 0
+    return self.step
 
   def to(self, device):
+    self.device = device
     self.representation_model = self.representation_model.to(device)
     self.prediction_model = self.prediction_model.to(device)
     self.dynamics_model = self.dynamics_model.to(device)
@@ -208,7 +216,9 @@ class DynamicsModel(nn.Module):
     self.residual_blocks = [ResidualBlock(128, 3) for _ in range(self.n_residual_blocks)]
     self.residual_blocks = ListModule(*self.residual_blocks)
     self.hidden_state_conv = nn.Conv2d(128, 128, 3, 1, 1)
-    self.reward_conv = nn.Conv2d(128, 1, 6, 1, 0)
+
+    self.reward_conv = nn.Conv2d(128, 256, 6, 1, 0)
+    self.reward_linear = nn.Linear(256, 1)
 
   def forward(self, x):
     z = self.conv_layer(x)
@@ -218,7 +228,10 @@ class DynamicsModel(nn.Module):
 
     # TODO: try using ReLU on hidden state output for Atari
     hidden_state = self.hidden_state_conv(z)
-    reward_pred = self.reward_conv(z).view(-1, 1)
+    reward_pred_z = self.reward_conv(z)
+    reward_pred_z = F.relu(reward_pred_z)
+    reward_pred_z = reward_pred_z.view(-1, 256)
+    reward_pred = self.reward_linear(reward_pred_z)
 
     return hidden_state, reward_pred
 

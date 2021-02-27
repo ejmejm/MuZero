@@ -22,6 +22,7 @@ class MuZeroConfig(object):
          lr_decay_steps: float,
          visit_softmax_temperature_fn,
          env_name: str,
+         action_repeat: int = 1,
          training_steps: int = int(1e6),
          obs_shape: Tuple[int] = (8*3, 96, 96),
          obs_preprocessing_type: Optional[str] = None,
@@ -38,6 +39,7 @@ class MuZeroConfig(object):
     self.max_moves = max_moves
     self.num_simulations = num_simulations
     self.discount = discount
+    self.action_repeat = action_repeat
 
     # Root prior exploration noise.
     self.root_dirichlet_alpha = dirichlet_alpha
@@ -146,17 +148,18 @@ def make_gym_atari_config(env_name: str) -> MuZeroConfig:
 
   return MuZeroConfig(
     action_space_size=env.action_space.n,
-    max_moves=27000,  # Half an hour at action repeat 4.
+    max_moves=1000, # Could increase this
     discount=0.997,
     dirichlet_alpha=0.25,
-    num_simulations=7,
-    batch_size=512,
+    num_simulations=6,
+    batch_size=32,
     td_steps=10,
-    num_actors=4,
-    lr_init=0.05,
+    num_actors=8,
+    lr_init=0.005,
     lr_decay_steps=int(35e3),
     training_steps=int(1e5),
     env_name=env_name,
+    action_repeat=3,
     obs_preprocessing_type='atari',
     obs_shape=(ATARI_DEFAULT_FRAMESTACK_SIZE * 3,) + ATARI_DEFAULT_CROP_SIZE,
     visit_softmax_temperature_fn=visit_softmax_temperature)

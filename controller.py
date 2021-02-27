@@ -18,12 +18,12 @@ TRAINER_LOG_PATH = 'logs/trainer.log'
 
 @ray.remote #(num_cpus=1, num_gpus=0)
 def launch_actor_process(config, shared_storage, replay_buffer):
-  logging.basicConfig(filename=AGENT_LOG_PATH, level=logging.DEBUG)
+  logging.basicConfig(filename=AGENT_LOG_PATH, level=logging.DEBUG, filemode='w')
   run_selfplay(config, shared_storage, replay_buffer)
 
 @ray.remote #(num_cpus=2, num_gpus=0.8)
 def launch_trainer_process(config, shared_storage, replay_buffer):
-  logging.basicConfig(filename=TRAINER_LOG_PATH, level=logging.DEBUG)
+  logging.basicConfig(filename=TRAINER_LOG_PATH, level=logging.DEBUG, filemode='w')
   train_network(config, shared_storage, replay_buffer)
 
 # MuZero training is split into two independent parts: Network training and
@@ -41,7 +41,7 @@ def muzero(config: MuZeroConfig):
 
   # Spin up actor processes
   sim_processes = []
-  for i in range(1): #config.num_actors):
+  for i in range(config.num_actors):
     logging.debug('Launching actor #{}'.format(i+1))
     proc = launch_actor_process.remote(config, shared_storage, replay_buffer)
     sim_processes.append(proc)
@@ -58,7 +58,7 @@ def muzero(config: MuZeroConfig):
 
 
 if __name__ == '__main__':
-  logging.basicConfig(filename=CONTROLLER_LOG_PATH, level=logging.DEBUG)
+  logging.basicConfig(filename=CONTROLLER_LOG_PATH, level=logging.DEBUG, filemode='w')
 
   ray.init()
 

@@ -45,14 +45,18 @@ def play_game(config: MuZeroConfig, network: Network) -> Game:
     root = Node(0)
     last_observation = game.make_image(-1)
     root.expand(game.to_play(), game.legal_actions(),
-                network.initial_inference(last_observation))
+                network.initial_inference(last_observation).numpy())
     root.add_exploration_noise(config)
 
-    logging.debug('Running MCTS on step {}.'.format(len(game.history)))
+    # logging.debug('Running MCTS on step {}.'.format(len(game.history)))
     # We then run a Monte Carlo Tree Search using only action sequences and the
     # model learned by the network.
     run_mcts(config, root, game.action_history(), network)
     action = root.select_action(config, len(game.history), network)
     game.apply(action)
     game.store_search_statistics(root)
+
+  logging.info('Finished episode at step {} | cumulative reward: {}' \
+      .format(len(game.obs_history), sum(game.rewards)))
+
   return game

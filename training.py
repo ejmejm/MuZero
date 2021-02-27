@@ -1,11 +1,14 @@
 import logging
 import time
 
+import numpy as np
 import ray
 import torch
+from torch.nn import functional as F
 from torch import optim
 
 from config import MuZeroConfig
+from env import Action
 from models import Network
 from replay_data import ReplayBuffer
 
@@ -42,12 +45,12 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
 
   learning_rate = config.lr_init * config.lr_decay_rate**(
       network.training_steps() / config.lr_decay_steps)
-  optimizer = optim.SGD(network.parameters(),
-      lr=learning_rate, momentum=config.momentum)
+  optimizer = optim.SGD(network.parameters(), lr=learning_rate,
+      momentum=config.momentum, weight_decay=config.weight_decay)
 
   while ray.get(replay_buffer.get_buffer_size.remote()) == 0:
     logging.debug('Waiting on replay buffer to be filled...')
-    time.sleep(30)
+    time.sleep(2)#30)
 
   ### Main training loop ###
   for step in range(config.training_steps):
@@ -55,48 +58,101 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
     if step % config.checkpoint_interval == 0:
         storage.save_network.remote(step, network)
     batch = ray.get(batch_future)
-    update_weights(optimizer, network, batch, config.weight_decay)
+    update_weights(optimizer, network, batch)
 
 
-def update_weights(optimizer: optim.Optimizer, network: Network, batch,
-                   weight_decay: float):
-  loss = 0
+def update_weights(optimizer: optim.Optimizer, network: Network, batch):
+  optimizer.zero_grad()
+
+  value_loss = 0
+  reward_loss = 0
+  policy_loss = 0
   for image, actions, targets in batch:
-    print('OMG MADE IT THIS FAR', image.shape, actions.shape, type(targets), targets)
     # Initial step, from the real observation.
-    value, reward, policy_logits, hidden_state = network.initial_inference(
-        image)
-    predictions = [(1.0, value, reward, policy_logits)]
+    value, reward, policy_logits, hidden_state = network.initial_inference(image)
+    predictions = [(1.0 / len(batch), value, reward, policy_logits)]
 
-  #   # Recurrent steps, from action and previous hidden state.
-  #   for action in actions:
-  #     value, reward, policy_logits, hidden_state = network.recurrent_inference(
-  #         hidden_state, action)
-  #     predictions.append((1.0 / len(actions), value, reward, policy_logits))
+    # Recurrent steps, from action and previous hidden state.
+    for action in actions:
+      value, reward, policy_logits, hidden_state = network.recurrent_inference(
+          hidden_state, action)
+      # TODO: Try not scaling this for efficiency
+      # Scale so total recurrent inference updates have the same weight as the on initial inference update
+      predictions.append((1.0 / len(actions), value, reward, policy_logits))
 
-  #     hidden_state = scale_gradient(hidden_state, 0.5)
+      hidden_state = scale_gradient(hidden_state, 0.5)
 
-  #   for prediction, target in zip(predictions, targets):
-  #     gradient_scale, value, reward, policy_logits = prediction
-  #     target_value, target_reward, target_policy = target
+    for prediction, target in zip(predictions, targets):
+      gradient_scale, value, reward, policy_logits = prediction
+      target_value, target_reward, target_policy = \
+          (torch.tensor(item, dtype=torch.float32, device=value.device.type) \
+          for item in target)
 
-  #     l = (
-  #         scalar_loss(value, target_value) +
-  #         scalar_loss(reward, target_reward) +
-  #         tf.nn.softmax_cross_entropy_with_logits(
-  #             logits=policy_logits, labels=target_policy))
+      # Past end of the episode
+      if len(target_policy) == 0:
+        break
 
-  #     loss += scale_gradient(l, gradient_scale)
+      value_loss += gradient_scale * scalar_loss(value, target_value)
+      reward_loss += gradient_scale * scalar_loss(reward, target_reward)
+      policy_loss += gradient_scale * cross_entropy_with_logits(policy_logits, target_policy)
+      
+      # print('val -------', value, target_value, scalar_loss(value, target_value))
+      # print('rew -------', reward, target_reward, scalar_loss(reward, target_reward))
+      # print('pol -------', policy_logits, target_policy, cross_entropy_with_logits(policy_logits, target_policy))
 
-  # for weights in network.get_weights():
-  #   loss += weight_decay * tf.nn.l2_loss(weights)
+  value_loss /= len(batch)
+  reward_loss /= len(batch)
+  policy_loss /= len(batch)
 
-  # optimizer.minimize(loss)
+  total_loss = value_loss + reward_loss + policy_loss
+  scaled_loss = scale_gradient(total_loss, gradient_scale)
 
-# def scale_gradient(tensor, scale):
-#   """Scales the gradient for the backward pass."""
-#   return tensor * scale + tf.stop_gradient(tensor) * (1 - scale)
+  logging.info('Training step {} losses'.format(network.training_steps()) + \
+      ' | Total: {:.5f}'.format(total_loss) + \
+      ' | Value: {:.5f}'.format(value_loss) + \
+      ' | Reward: {:.5f}'.format(reward_loss) + \
+      ' | Policy: {:.5f}'.format(policy_loss))
 
-# def scalar_loss(prediction, target) -> float:
-#   # MSE in board games, cross entropy between categorical values in Atari.
-#   return -1
+  scaled_loss.backward()
+  optimizer.step()
+  network.increment_step()
+
+def scale_gradient(tensor, scale):
+  """Scales the gradient for the backward pass."""
+  return tensor * scale + tensor.detach() * (1 - scale)
+
+# Change this loss for atari once I implement supports
+def scalar_loss(prediction, target) -> float:
+  return torch.square(target - prediction)
+
+# Only supports one instance right now
+def cross_entropy_with_logits(prediction, target):
+  return -torch.sum(target * F.log_softmax(prediction, dim=0))
+
+
+if __name__ == '__main__':
+  print('Cross Entropy Test:', \
+      cross_entropy_with_logits(torch.tensor([0.0088, 0.1576, -0.0345, -0.0805]), \
+      torch.tensor([0.0000, 0.1429, 0.4286, 0.4286])))
+
+  in_shape = (8*3, 96, 96)
+  action_space_size = 4
+  network = Network(in_shape, action_space_size, 'cuda')
+
+  batch_size = 1
+  rollout_len = 5
+
+  batch = []
+  for i in range(batch_size):
+    img = np.ones(in_shape)
+    actions = [Action(2) for _ in range(rollout_len)] 
+    # (value, reward, empirical_policy)
+    targets = [(0.7, 0.5, [0.25, 0.25, 0.25, 0.25]) for _ in range(rollout_len)]
+
+    batch.append((img, actions, targets))
+    
+  optimizer = optim.SGD(network.parameters(), lr=0.001,
+      momentum=0.9, weight_decay=1e-4)
+
+  for i in range(1000):
+    update_weights(optimizer, network, batch)

@@ -96,7 +96,7 @@ class Node(object):
     self.hidden_state = network_output.hidden_state
     self.reward = network_output.reward
     # Softmax for policy is calculated in expand make sure not to recalculate it
-    policy = {a: np.exp(network_output.policy_logits[a]) for a in actions}
+    policy = {a: np.exp(network_output.policy_logits[a.index]) for a in actions}
     policy_sum = sum(policy.values())
     for action, p in policy.items():
       self.children[action] = Node(p / policy_sum, self)
@@ -163,6 +163,7 @@ def run_mcts(config: MuZeroConfig, root: Node, action_history: ActionHistory,
     parent = node.parent
     network_output = network.recurrent_inference(parent.hidden_state,
                                                  history.last_action())
+    network_output = network_output.numpy()
     node.expand(history.to_play(), history.action_space(), network_output)
     node.backpropagate(network_output.value, history.to_play(),
                        config.discount, min_max_stats)
