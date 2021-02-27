@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import cv2
 import gym
@@ -69,38 +69,50 @@ class ActionHistory(object):
     # TODO: Store and return correct player for multi-player games
     return Player()
   
+def get_frame_stack(state_index: int, obs_history: List,
+                    n_framestack: int = ATARI_DEFAULT_FRAMESTACK_SIZE):
+  start_idx = max(0, state_index + 1 - n_framestack)
+  end_idx = state_index + 1
+  target_frames = obs_history[start_idx:end_idx]
+
+  # If necessary, add in any extra start frames
+  under_clip = n_framestack - len(target_frames)
+  if under_clip > 0:
+    extra_frames = [target_frames[0:1] for _ in range(under_clip)]
+    target_frames = np.concatenate(extra_frames + [target_frames], axis=0)
+
+  return target_frames
+
 # TODO: Consider preprocessing in base env to save time on recalculation
-def atari_preprocess_obs(state_index: int, obs_history: List,
-                         crop_size=ATARI_DEFAULT_CROP_SIZE,
-                         n_framestack=ATARI_DEFAULT_FRAMESTACK_SIZE):
+def atari_preprocess_obs(state_index: Optional[int] = None, obs_history: List = None, obs=None,
+                         crop_size: Optional[int] = ATARI_DEFAULT_CROP_SIZE,
+                         n_framestack: int = ATARI_DEFAULT_FRAMESTACK_SIZE,
+                         prep_for_training: bool = True):
+  if obs_history is not None:
     if state_index < 0:
       state_index = len(obs_history) - state_index
 
-    start_idx = max(0, state_index + 1 - n_framestack)
-    end_idx = state_index + 1
-    target_frames = obs_history[start_idx:end_idx]
+    target_frames = get_frame_stack(state_index, obs_history, n_framestack)
+  else:
+    assert obs is not None, 'obs_history, and obs cannot both be None!'
+    target_frames = obs
 
-    # Resize frames
+  # Resize frames
+  if crop_size:
     for i, frame in enumerate(target_frames):
       target_frames[i] = cv2.resize(frame, crop_size, interpolation=cv2.INTER_LINEAR)
-    target_frames = np.array(target_frames, dtype=np.float32)
+  target_frames = np.array(target_frames, dtype=np.float32)
+  # Rearange color channels to front of height x width
 
+  if prep_for_training:
     # Color scaling
     target_frames = target_frames / 255.0
-    # Rearange color channels to front of height x width
     target_frames = target_frames.transpose(0, 3, 1, 2)
-    # If necessary, add in any extra start frames
-    under_clip = n_framestack - len(target_frames)
-    if under_clip > 0:
-      extra_frames = []
-      for _ in range(under_clip):
-        extra_frames.append(target_frames[0:1])
-      target_frames = np.concatenate(extra_frames + [target_frames], axis=0)
     # Squash first 2 dimensions
     dims = target_frames.shape
     target_frames = target_frames.reshape(dims[0] * dims[1], dims[2], dims[3])
 
-    return target_frames
+  return target_frames.squeeze()
 
 class Game(object):
   """A single episode of interaction with the environment."""
@@ -108,7 +120,7 @@ class Game(object):
   def __init__(self, config: MuZeroConfig):
     self.env_name = config.env_name
     self.environment = Environment(self.env_name)  # Game specific environment.
-    self.obs_history = [self.environment.curr_obs] # Observations at each step
+    self.obs_history = [] # Observations at each step
     self.history = [] # Action taken at each step
     self.rewards = [] # Reward taken at each step
     self.child_visits = [] # Each element is a list of fractions of the time each action was taken for a given step
@@ -118,10 +130,25 @@ class Game(object):
     self.discount = config.discount
     self.max_moves = config.max_moves
     self.action_repeat = config.action_repeat
+    self.process_obs_before_store = True
+    self.crop_size = config.obs_shape[1:]
 
     if config.obs_preprocessing_type and config.obs_preprocessing_type.lower() == 'atari':
-      self.make_image = lambda state_index: atari_preprocess_obs(
-          state_index, self.obs_history, config.obs_shape[1:])
+      if self.process_obs_before_store:
+        self.make_image = lambda state_index: atari_preprocess_obs(
+            state_index, self.obs_history, crop_size=None,
+            n_framestack=ATARI_DEFAULT_FRAMESTACK_SIZE)
+
+        processed_obs = atari_preprocess_obs(
+            obs=[self.environment.curr_obs], crop_size=self.crop_size,
+            prep_for_training=False)
+        self.obs_history.append(processed_obs)
+      else:
+        self.make_image = lambda state_index: atari_preprocess_obs(
+            state_index, self.obs_history, crop_size=config.obs_shape[1:],
+            n_framestack=ATARI_DEFAULT_FRAMESTACK_SIZE)
+
+        self.obs_history.append(self.environment.curr_obs)
     else:
       raise NotImplementedError('"atari" is currently the only supported preprocessing type!')
 
@@ -143,7 +170,12 @@ class Game(object):
         break
     self.rewards.append(reward)
     self.history.append(action)
-    self.obs_history.append(self.environment.curr_obs)
+
+    obs = self.environment.curr_obs
+    if self.process_obs_before_store:
+      obs = atari_preprocess_obs(obs=[obs], crop_size=self.crop_size,
+                                 prep_for_training=False)
+    self.obs_history.append(obs)
 
   def store_search_statistics(self, root: Node):
     children_nodes = root.children.values()
