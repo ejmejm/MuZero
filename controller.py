@@ -17,8 +17,9 @@ TRAINER_LOG_PATH = 'logs/trainer.log'
 
 
 @ray.remote #(num_cpus=1, num_gpus=0)
-def launch_actor_process(config, shared_storage, replay_buffer):
-  logging.basicConfig(filename=AGENT_LOG_PATH, level=logging.DEBUG, filemode='w')
+def launch_actor_process(config, shared_storage, replay_buffer, actor_id):
+  logging.basicConfig(filename=AGENT_LOG_PATH, level=logging.DEBUG,
+                      format='[Agent #{}] %(levelname)-5s | %(message)s'.format(actor_id))
   run_selfplay(config, shared_storage, replay_buffer)
 
 @ray.remote #(num_cpus=2, num_gpus=0.8)
@@ -43,7 +44,7 @@ def muzero(config: MuZeroConfig):
   sim_processes = []
   for i in range(config.num_actors):
     logging.debug('Launching actor #{}'.format(i+1))
-    proc = launch_actor_process.remote(config, shared_storage, replay_buffer)
+    proc = launch_actor_process.remote(config, shared_storage, replay_buffer, i)
     sim_processes.append(proc)
 
   launch_trainer_process.remote(config, shared_storage, replay_buffer)
@@ -59,6 +60,7 @@ def muzero(config: MuZeroConfig):
 
 if __name__ == '__main__':
   logging.basicConfig(filename=CONTROLLER_LOG_PATH, level=logging.DEBUG, filemode='w')
+  open(AGENT_LOG_PATH, 'w+').close() # Reset the file
 
   ray.init()
 
