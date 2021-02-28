@@ -53,7 +53,7 @@ def muzero(config: MuZeroConfig):
   while True:
     buffer_size = ray.get(replay_buffer.get_buffer_size.remote())
     logging.debug('Buffer size: {}'.format(buffer_size))
-    time.sleep(10)
+    time.sleep(20)
 
   # return storage.latest_network()
 

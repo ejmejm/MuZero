@@ -32,7 +32,7 @@ class Network(object):
 
     self.representation_model = RepresentationModel(in_shape).to(self.device)
     self.prediction_model = PredictionModel(action_space_size, self.hidden_state_shape).to(self.device)
-    self.dynamics_model = DynamicsModel(action_space_size, (128+action_space_size, 6, 6)).to(self.device)
+    self.dynamics_model = DynamicsModel(action_space_size, (128+1, 6, 6)).to(self.device)
 
   def initial_inference(self, image) -> NetworkOutput:
     assert image.shape == self.in_shape, 'Initial inference input shape should be {}, not {}!' \
@@ -50,9 +50,26 @@ class Network(object):
     # representation + prediction function
     return NetworkOutput(output_value, output_reward, output_policy, output_hidden_state)
 
+  def batch_initial_inference(self, image) -> NetworkOutput:
+    assert image.shape[1:] == self.in_shape, 'Initial inference input shape should be {}, not {}!' \
+        .format(self.in_shape, image.shape)
+
+    formatted_obs = torch.tensor(image, device=self.device).float()
+    hidden_states = self.representation_model(formatted_obs)
+    policies, values = self.prediction_model(hidden_states)
+
+    batch_size = hidden_states.shape[0]
+    output_hidden_states = hidden_states
+    output_rewards = torch.tensor([0] * batch_size, dtype=torch.float32, device=self.device)
+    output_policies = policies
+    output_values = values.squeeze()
+
+    # representation + prediction function
+    return NetworkOutput(output_values, output_rewards, output_policies, output_hidden_states)
+
   def recurrent_inference(self, hidden_state, action: Action) -> NetworkOutput:
     assert hidden_state.shape == (1,) + self.hidden_state_shape, \
-        'Reccurent inference input shape should be {}, not {}!' \
+        'Recurrent inference input shape should be {}, not {}!' \
         .format(self.hidden_state_shape, hidden_state.shape)
 
     if self.device != hidden_state.device.type:
@@ -64,9 +81,11 @@ class Network(object):
     # encoded action is being used to generate the next hidden state
 
     # TODO: Improve the action encoding space efficiency
-    encoded_action = torch.zeros((1, self.action_space_size) + self.hidden_state_shape[1:],
+    encoded_action = torch.zeros((1, 1) + self.hidden_state_shape[1:],
         device=self.device, dtype=torch.float32)
-    encoded_action[0, action.index] = 1
+    action_scale = action.index / (self.action_space_size - 1)
+    encoded_action += action_scale
+
     encoded_state_action = torch.cat([hidden_state, encoded_action], dim=1)
 
     next_hidden_state, reward = self.dynamics_model(encoded_state_action)
@@ -79,6 +98,44 @@ class Network(object):
 
     # representation + prediction function
     return NetworkOutput(output_value, output_reward, output_policy, output_hidden_state)
+
+  def batch_recurrent_inference(self, hidden_states, actions: Action) -> NetworkOutput:
+    assert hidden_states.shape[1:] == self.hidden_state_shape, \
+        'Recurrent inference input shape should be {}, not {}!' \
+        .format(self.hidden_state_shape, hidden_states[1:].shape)
+    batch_size = hidden_states.shape[0]
+
+    if self.device != hidden_states.device.type:
+      hidden_states = hidden_states.to(self.device)
+
+    # Add encoded action to hidden state
+    # TODO: Encode the actions for the past n frames
+    # Update on this, shouldn't actually be necessary because the
+    # encoded action is being used to generate the next hidden state
+
+    # TODO: Improve the action encoding space efficiency
+    encoded_actions = torch.ones((batch_size,) + self.hidden_state_shape[1:],
+        device=self.device, dtype=torch.float32)
+    action_scales = [action.index / (self.action_space_size - 1) for action in actions]
+    shape_padding = [1] * (len(encoded_actions.shape) - 1)
+    action_scales = torch.tensor(action_scales,
+        device=self.device, dtype=torch.float32) \
+        .view([len(action_scales)] + shape_padding)
+    encoded_actions *= action_scales
+    encoded_actions = encoded_actions.unsqueeze(1)
+  
+    encoded_state_actions = torch.cat([hidden_states, encoded_actions], dim=1)
+
+    next_hidden_states, rewards = self.dynamics_model(encoded_state_actions)
+    policies, values = self.prediction_model(next_hidden_states)
+
+    output_hidden_states = next_hidden_states
+    output_rewards = rewards.squeeze()
+    output_policies = policies
+    output_values = values.squeeze()
+
+    # representation + prediction function
+    return NetworkOutput(output_values, output_rewards, output_policies, output_hidden_states)
 
   def increment_step(self):
     self.step += 1
@@ -200,7 +257,7 @@ class RepresentationModel(nn.Module):
     return z
 
 class DynamicsModel(nn.Module):
-  def __init__(self, action_space_size=4, in_shape=(128+4, 6, 6)):
+  def __init__(self, action_space_size=4, in_shape=(128+1, 6, 6)):
     super().__init__()
     self.in_shape = in_shape
     self.n_residual_blocks = 16

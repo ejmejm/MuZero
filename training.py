@@ -58,8 +58,8 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
     if step % config.checkpoint_interval == 0:
         storage.save_network.remote(step, network)
     batch = ray.get(batch_future)
-    update_weights(optimizer, network, batch)
-
+    logging.debug('updating weights')
+    batch_update_weights(optimizer, network, batch)
 
 def update_weights(optimizer: optim.Optimizer, network: Network, batch):
   optimizer.zero_grad()
@@ -117,18 +117,71 @@ def update_weights(optimizer: optim.Optimizer, network: Network, batch):
   optimizer.step()
   network.increment_step()
 
+def batch_update_weights(optimizer: optim.Optimizer, network: Network, batch):
+  optimizer.zero_grad()
+
+  value_loss = 0
+  reward_loss = 0
+  policy_loss = 0
+
+  # Format training data
+  image_batch = np.array([item[0] for item in batch])
+  action_batches = np.array([item[1] for item in batch])
+  target_batches = np.array([item[2] for item in batch])
+  action_batches = np.swapaxes(action_batches, 0, 1)
+  target_batches = target_batches.transpose(1, 2, 0)
+
+  # Run initial inference
+  values, rewards, policy_logits, hidden_states = network.batch_initial_inference(image_batch)
+  predictions = [(1, values, rewards, policy_logits)]
+
+  # Run recurrent inferences
+  for action_batch in action_batches:
+    values, rewards, policy_logits, hidden_states = network.batch_recurrent_inference(
+        hidden_states, action_batch)
+    predictions.append((1.0 / len(action_batches), values, rewards, policy_logits))
+
+    hidden_states = scale_gradient(hidden_states, 0.5)
+
+  # Calculate losses
+  for target_batch, prediction_batch in zip(target_batches, predictions):
+    gradient_scale, values, rewards, policy_logits = prediction_batch
+    target_values, target_rewards, target_policies = \
+        (torch.tensor(list(item), dtype=torch.float32, device=values.device.type) \
+        for item in target_batch)
+    
+    gradient_scale = torch.tensor(gradient_scale, dtype=torch.float32, device=values.device.type)
+    value_loss += gradient_scale * scalar_loss(values, target_values)
+    reward_loss += gradient_scale * scalar_loss(rewards, target_rewards)
+    policy_loss += gradient_scale * cross_entropy_with_logits(policy_logits, target_policies, dim=1)
+
+  value_loss = value_loss.mean() / len(batch)
+  reward_loss = reward_loss.mean() / len(batch)
+  policy_loss = policy_loss.mean() / len(batch)
+
+  total_loss = value_loss + reward_loss + policy_loss
+  logging.info('Training step {} losses'.format(network.training_steps()) + \
+      ' | Total: {:.5f}'.format(total_loss) + \
+      ' | Value: {:.5f}'.format(value_loss) + \
+      ' | Reward: {:.5f}'.format(reward_loss) + \
+      ' | Policy: {:.5f}'.format(policy_loss))
+
+  # Update weights
+  total_loss.backward()
+  optimizer.step()
+  network.increment_step()
+
 def scale_gradient(tensor, scale):
   """Scales the gradient for the backward pass."""
   return tensor * scale + tensor.detach() * (1 - scale)
 
-# Change this loss for atari once I implement supports
+# TODO: Change this loss for atari once I implement supports
 def scalar_loss(prediction, target) -> float:
   return torch.square(target - prediction)
 
-# Only supports one instance right now
-def cross_entropy_with_logits(prediction, target):
-  return -torch.sum(target * F.log_softmax(prediction, dim=0))
-
+# Should use dim=0 for single batch, dim=1 for multiple batches
+def cross_entropy_with_logits(prediction, target, dim=0):
+  return -torch.sum(target * F.log_softmax(prediction, dim=dim), dim=dim)
 
 if __name__ == '__main__':
   print('Cross Entropy Test:', \
@@ -139,7 +192,7 @@ if __name__ == '__main__':
   action_space_size = 4
   network = Network(in_shape, action_space_size, 'cuda')
 
-  batch_size = 1
+  batch_size = 3
   rollout_len = 5
 
   batch = []
@@ -147,7 +200,7 @@ if __name__ == '__main__':
     img = np.ones(in_shape)
     actions = [Action(2) for _ in range(rollout_len)] 
     # (value, reward, empirical_policy)
-    targets = [(0.7, 0.5, [0.25, 0.25, 0.25, 0.25]) for _ in range(rollout_len)]
+    targets = [(0.7, 0.5, [0.25, 0.25, 0.25, 0.25]) for _ in range(rollout_len+1)]
 
     batch.append((img, actions, targets))
     
@@ -155,4 +208,4 @@ if __name__ == '__main__':
       momentum=0.9, weight_decay=1e-4)
 
   for i in range(1000):
-    update_weights(optimizer, network, batch)
+    batch_update_weights(optimizer, network, batch)

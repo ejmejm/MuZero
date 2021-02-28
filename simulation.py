@@ -29,8 +29,7 @@ def run_selfplay(config: MuZeroConfig, storage: SharedStorage,
     logging.debug('Finished game, storing in replay buffer.')
 
     # TODO: Stagger saving to replay_buffer by n episodes for efficiency
-    game_ref = ray.put(game)
-    replay_buffer.save_game.remote(game_ref)
+    replay_buffer.save_game.remote(game)
 
 
 # Each game is produced by starting at the initial board position, then

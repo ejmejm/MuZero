@@ -156,7 +156,7 @@ class Game(object):
     return Game(config)
 
   def terminal(self) -> bool:
-    return self.environment.done or len(self.obs_history) > self.max_moves # or len(self.obs_history) > 10 # For quick testing
+    return self.environment.done or len(self.obs_history) > self.max_moves #or len(self.obs_history) > 10 # For quick testing
 
   def legal_actions(self) -> List[Action]:
     # Game specific calculation of legal actions.
@@ -217,7 +217,9 @@ class Game(object):
         targets.append((value, last_reward, self.child_visits[current_index]))
       else:
         # States past the end of games are treated as absorbing states.
-        targets.append((0, last_reward, []))
+        # TODO: Make sure not putting nothing for policy doesn't hurt
+        default_policy = [1 / self.action_space_size for _ in range(self.action_space_size)]
+        targets.append((0, last_reward, default_policy))
     return targets
 
   def to_play(self) -> Player:

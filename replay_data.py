@@ -6,7 +6,7 @@ import ray
 from config import MuZeroConfig
 from env import Action, Environment, Player, Game
 
-@ray.remote
+@ray.remote#(memory=45 * 1000 * 1024 * 1024) # 50 GB
 class ReplayBuffer(object):
 
   def __init__(self, config: MuZeroConfig):
@@ -25,7 +25,8 @@ class ReplayBuffer(object):
   def sample_batch(self, num_unroll_steps: int, td_steps: int):
     games = [self.sample_game() for _ in range(self.batch_size)]
     game_pos = [(g, self.sample_position(g)) for g in games]
-    return [(g.make_image(i), g.history[i:i + num_unroll_steps],
+
+    return [(g.make_image(i), get_padded_action_history(g, i, num_unroll_steps),
              g.make_target(i, num_unroll_steps, td_steps, g.to_play()))
             for (g, i) in game_pos]
 
@@ -42,3 +43,11 @@ class ReplayBuffer(object):
   def sample_position(self, game: Game) -> int:
     # Sample position from game either uniformly or according to some priority.
     return np.random.randint(0, len(game.obs_history))
+
+
+# TODO: Make sure padding isn't hurting the training
+def get_padded_action_history(game, i, num_unroll_steps):
+  actions = game.history[i:i + num_unroll_steps]
+  for _ in range(num_unroll_steps - len(actions)):
+    actions.append(Action(0))
+  return actions
