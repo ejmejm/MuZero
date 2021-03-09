@@ -1,3 +1,5 @@
+import copy
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -19,7 +21,11 @@ class NetworkOutput(NamedTuple):
     return NetworkOutput(output_value, output_reward, output_policy, self.hidden_state)
 
 class Network(object):
-  def __init__(self, in_shape, action_space_size, device=None):
+  def __init__(self,
+               in_shape,
+               action_space_size,
+               device=None,
+               models=None):
     self.in_shape = in_shape
     self.action_space_size = action_space_size
     self.action_space = generate_action_range(self.action_space_size)
@@ -30,9 +36,14 @@ class Network(object):
     else:
       self.device = device
 
-    self.representation_model = RepresentationModel(in_shape).to(self.device)
-    self.prediction_model = PredictionModel(action_space_size, self.hidden_state_shape).to(self.device)
-    self.dynamics_model = DynamicsModel(action_space_size, (128+1, 6, 6)).to(self.device)
+    if models:
+      self.representation_model = models[0]
+      self.prediction_model = models[1]
+      self.dynamics_model = models[2]
+    else:
+      self.representation_model = RepresentationModel(in_shape).to(self.device)
+      self.prediction_model = PredictionModel(action_space_size, self.hidden_state_shape).to(self.device)
+      self.dynamics_model = DynamicsModel(action_space_size, (128+1, 6, 6)).to(self.device)
 
   def initial_inference(self, image) -> NetworkOutput:
     assert image.shape == self.in_shape, 'Initial inference input shape should be {}, not {}!' \
@@ -144,11 +155,19 @@ class Network(object):
     # How many steps / batches the network has been trained for.
     return self.step
 
-  def to(self, device):
-    self.device = device
-    self.representation_model = self.representation_model.to(device)
-    self.prediction_model = self.prediction_model.to(device)
-    self.dynamics_model = self.dynamics_model.to(device)
+  def to(self, device, inplace=False):
+    if self.device == device:
+      return self
+
+    if inplace:
+      self.representation_model.to(device)
+      self.prediction_model.to(device)
+      self.dynamics_model.to(device)
+      self.device = device
+      return self
+
+    new_network = copy.deepcopy(self)
+    return new_network.to(device, inplace=True)
 
   def parameters(self):
     return list(self.representation_model.parameters()) + \

@@ -10,6 +10,7 @@ from torch import optim
 from config import MuZeroConfig
 from env import Action
 from models import Network
+from recording import TensorboardLogger
 from replay_data import ReplayBuffer
 
 
@@ -38,10 +39,10 @@ class SharedStorage(object):
     self._networks[step] = network
 
 def train_network(config: MuZeroConfig, storage: SharedStorage,
-                  replay_buffer: ReplayBuffer):
+                  replay_buffer: ReplayBuffer, writer: TensorboardLogger):
   ### Pre-training setup ###
   network = ray.get(storage.latest_network.remote())
-  network.to('cuda') # TODO: Add a config setting for training device
+  network = network.to('cuda') # TODO: Add a config setting for training device
 
   learning_rate = config.lr_init * config.lr_decay_rate**(
       network.training_steps() / config.lr_decay_steps)
@@ -56,10 +57,13 @@ def train_network(config: MuZeroConfig, storage: SharedStorage,
   for step in range(config.training_steps):
     batch_future = replay_buffer.sample_batch.remote(config.num_unroll_steps, config.td_steps)
     if step % config.checkpoint_interval == 0:
-        storage.save_network.remote(step, network)
+      cpu_network = network.to('cpu')
+      storage.save_network.remote(step, cpu_network)
     batch = ray.get(batch_future)
     logging.debug('updating weights')
-    batch_update_weights(optimizer, network, batch)
+    losses = batch_update_weights(optimizer, network, batch)
+    losses = (loss.to('cpu') for loss in losses)
+    writer.record_training_results.remote(*losses)
 
 def update_weights(optimizer: optim.Optimizer, network: Network, batch):
   optimizer.zero_grad()
@@ -170,6 +174,8 @@ def batch_update_weights(optimizer: optim.Optimizer, network: Network, batch):
   total_loss.backward()
   optimizer.step()
   network.increment_step()
+
+  return total_loss, value_loss, reward_loss, policy_loss
 
 def scale_gradient(tensor, scale):
   """Scales the gradient for the backward pass."""

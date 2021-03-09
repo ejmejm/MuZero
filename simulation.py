@@ -6,26 +6,27 @@ from config import MuZeroConfig
 from env import Game
 from mcts import run_mcts, Node
 from models import Network
+from recording import TensorboardLogger
 from replay_data import ReplayBuffer
 from training import SharedStorage
-
 
 # Each self-play job is independent of all others; it takes the latest network
 # snapshot, produces a game and makes it available to the training job by
 # writing it to a shared replay buffer.
 def run_selfplay(config: MuZeroConfig, storage: SharedStorage,
-                 replay_buffer: ReplayBuffer):
+                 replay_buffer: ReplayBuffer, writer: TensorboardLogger):
   logging.debug('Starting self play loop.')
 
   while True:
     # TODO: Stagger getting the newest network by n episodes for efficienty
     network = ray.get(storage.latest_network.remote())
     # TODO: Add an option to use GPUs for rollout actors
-    network.to('cpu')
+    network = network.to('cpu')
 
     logging.debug('Starting new game.')
     game = play_game(config, network)
     del game.environment # No reason to have this take up extra space
+    writer.record_sim_results.remote(sum(game.rewards), len(game.history))
     logging.debug('Finished game, storing in replay buffer.')
 
     # TODO: Stagger saving to replay_buffer by n episodes for efficiency

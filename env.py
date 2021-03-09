@@ -156,7 +156,7 @@ class Game(object):
     return Game(config)
 
   def terminal(self) -> bool:
-    return self.environment.done or len(self.obs_history) > self.max_moves #or len(self.obs_history) > 10 # For quick testing
+    return self.environment.done or len(self.obs_history) > self.max_moves # or len(self.obs_history) > 10 # For quick testing
 
   def legal_actions(self) -> List[Action]:
     # Game specific calculation of legal actions.

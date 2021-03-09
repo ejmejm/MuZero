@@ -6,7 +6,7 @@ import ray
 from config import MuZeroConfig
 from env import Action, Environment, Player, Game
 
-@ray.remote#(memory=45 * 1000 * 1024 * 1024) # 50 GB
+@ray.remote#(memory=45 * 1000 * 1024 * 1024) # 45 GB
 class ReplayBuffer(object):
 
   def __init__(self, config: MuZeroConfig):

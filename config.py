@@ -57,8 +57,8 @@ class MuZeroConfig(object):
 
     ### Training
     self.training_steps = training_steps
-    self.checkpoint_interval = int(1e3)
-    self.window_size = int(2e3)
+    self.checkpoint_interval = 500
+    self.window_size = 650 #int(2e3)
     self.batch_size = batch_size
     self.num_unroll_steps = 5
     self.td_steps = td_steps
@@ -135,9 +135,9 @@ class MuZeroConfig(object):
 def make_gym_atari_config(env_name: str) -> MuZeroConfig:
 
   def visit_softmax_temperature(num_moves, training_steps):
-    if training_steps < 50e3:
+    if training_steps < 20e3:
       return 1.0
-    elif training_steps < 75e3:
+    elif training_steps < 40e3:
       return 0.5
     else:
       return 0.25
@@ -148,14 +148,14 @@ def make_gym_atari_config(env_name: str) -> MuZeroConfig:
 
   return MuZeroConfig(
     action_space_size=env.action_space.n,
-    max_moves=1000, # Could increase this
+    max_moves=700, # Could increase this
     discount=0.997,
     dirichlet_alpha=0.25,
     num_simulations=6,
     batch_size=64,
     td_steps=10,
     num_actors=8,
-    lr_init=0.05,
+    lr_init=0.02,
     lr_decay_steps=int(35e3),
     training_steps=int(1e5),
     env_name=env_name,
